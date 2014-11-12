@@ -1,0 +1,10 @@
+#horris {
+    position: absolute;
+    width: 66px;
+    height: 58px;
+    background-image: url(chasing.png);
+}
+
+#horris.eating {
+    background-image: url(eating.png);
+}
