@@ -1,53 +1,61 @@
 (ns hungry-horris.core
-  (:require [cljs.core.async :refer [chan put! dropping-buffer sliding-buffer]]
-            [goog.dom :as dom]
+  (:require [goog.dom :as dom]
             [goog.style :as style]
             [goog.fx.dom :as fx-dom]
             [goog.math :as math]
             [goog.dom.classes :as classes]
-            [goog.events :as events])
-  (:require-macros [cljs.core.async.macros :refer [go]]))
+            [goog.events :as events]))
 
 (enable-console-print!)
 
-(defn listen [ch el type]
-  (events/listen
-    el type (fn [e] (put! ch e)))
-  ch)
+; Define horris's state
+(def state (atom {:eating {:now false :then false} :mouse [0 0]}))
 
-(defn set-interval [ch n]
-  (.setInterval js/window (fn [id] (put! ch :tick)) n) ch)
-
-(def state (atom {:eating false :mouse [0 0]}))
-
+; Create horris and add him to the page
 (def horris (dom/createDom "div" (clj->js {:id "horris"}) " "))
 (dom/append js/document.body horris)
 
-(let [ch (listen (chan (sliding-buffer 1)) js/document.body "mousemove")
-      bounds (style/getBounds horris)]
-  (go (while true (let [e (<! ch)
-                        x (- (.-clientX e) (/ (.-width bounds) 2))
-                        y (- (.-clientY e) (/ (.-height bounds) 2))]
-                    (swap! state update-in [:mouse] (fn [v] [x y]))))))
+(defn mouse-position
+  "Extract client mouse position from mouse event object as a vector [x y]"
+  [e]
+  [(.-clientX e) (.-clientY e)])
 
-(let [tick-ch (set-interval (chan (dropping-buffer 1)) 200)
-      bounds (style/getBounds horris)]
-  (go (while true
-        (let [_ (<! tick-ch)]
-          (.play (fx-dom/SlideFrom. horris (clj->js (:mouse @state)) 200))
-          (let [eating (.contains (style/getBounds horris) (math/Coordinate. (first (:mouse @state)) (second (:mouse @state))))
-                sound (dom/$ "eating")]
-            (classes/enable horris "eating" eating)
-            (if (not= (:eating @state) eating) (if eating (do (.load sound) (.play sound))))
-            (swap! state update-in [:eating] (fn [b] eating)))))))
+(defn center-on-coord
+  "Subtract half the width and height of the element from the coord"
+  [elm coord]
+  (let [bounds (style/getBounds elm)]
+    [(- (first coord) (/ (.-width bounds) 2))
+     (- (second coord) (/ (.-height bounds) 2))]))
 
-; (defn request-ani-frame [ch]
-;   (.requestAnimationFrame js/window (fn [id]
-;                                       ; (.log js/console id)
-;                                       (put! ch id)
-;                                       (recur ch))))
+(defn eating?
+  "Determine if horris is eating the mouse"
+  [horris coord]
+  (.contains
+    (style/getBounds horris)
+    (math/Coordinate. (first coord) (second coord))))
 
-; (let [ch (request-ani-frame (chan))]
-;   (go (while true
-;         (let [id (<! ch)]
-;           (.log js/console id)))))
+(defn render
+  "Render the view based on current state"
+  [horris state]
+  (let [mouse (:mouse @state)
+        eating (:eating @state)
+        sound (dom/$ "eating")]
+    (.play (fx-dom/SlideFrom. horris (clj->js (center-on-coord horris mouse)) 400))
+    (classes/enable horris "eating" (:now eating))
+    (if (not= (:was eating) (:now eating)) (if (:now eating) (do (.load sound) (.play sound))))))
+
+; Record mouse position
+(events/listen
+  js/document.body
+  "mousemove"
+  (fn [e] (let [mouse (mouse-position e)]
+            ; (print (clj->js mouse))
+            (swap! state update-in [:mouse] (fn [v] mouse)))))
+
+; Determine if horris is eating and render the view
+(.setInterval
+  js/window
+  (fn [id]
+    (swap! state update-in [:eating] (fn [b] {:was (:now (:eating @state)) :now (eating? horris (:mouse @state))}))
+    (render horris state))
+  300)
